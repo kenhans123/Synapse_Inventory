@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root{
+  --bg:#F6F7F9; --panel:#FFFFFF; --ink:#1B2333; --muted:#5E6878; --line:#D9DEE6; --accent:#1F3864;
+  --edge:#7A879B; --edge-hi:#1F3864; --chip:#EEF1F5; --canvas:#FBFCFD; --focus:#1F3864;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#12161D; --panel:#1A2029; --ink:#E6EAF0; --muted:#9AA4B2; --line:#2C3542; --accent:#8FB4E8;
+    --edge:#6E7C90; --edge-hi:#BFD4F2; --chip:#232B36; --canvas:#151A22; --focus:#BFD4F2;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12161D; --panel:#1A2029; --ink:#E6EAF0; --muted:#9AA4B2; --line:#2C3542; --accent:#8FB4E8;
+  --edge:#6E7C90; --edge-hi:#BFD4F2; --chip:#232B36; --canvas:#151A22; --focus:#BFD4F2;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--ink);font:13px/1.4 "Segoe UI",system-ui,-apple-system,Arial,sans-serif;display:flex;flex-direction:column}
+header{display:flex;align-items:baseline;gap:14px;padding:12px 18px;border-bottom:1px solid var(--line);background:var(--panel)}
+header h1{font-size:16px;margin:0;color:var(--accent)}
+header .meta{color:var(--muted);font-size:12px}
+header .spacer{flex:1}
+button,select,input{font:inherit;color:var(--ink)}
+.btn{background:var(--chip);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+main{flex:1;display:flex;min-height:0}
+aside{width:300px;flex:none;border-right:1px solid var(--line);background:var(--panel);display:flex;flex-direction:column;min-height:0}
+.ctl{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:9px}
+.ctl input[type=search]{width:100%;padding:7px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.row label{color:var(--muted);font-size:12px}
+.row select{padding:3px 5px;border:1px solid var(--line);border-radius:5px;background:var(--bg)}
+.chips{display:flex;flex-wrap:wrap;gap:5px}
+.chip{display:flex;align-items:center;gap:5px;padding:3px 8px;border-radius:12px;border:1px solid var(--line);background:var(--chip);cursor:pointer;font-size:11.5px;user-select:none}
+.chip.off{opacity:.4}
+.sw{width:10px;height:10px;border-radius:3px;border:1.5px solid}
+#list{overflow:auto;flex:1;padding:6px 0}
+#list .grp{padding:8px 14px 3px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+#list .it{padding:4px 14px 4px 22px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#list .it:hover{background:var(--chip)}
+#list .it.sel{background:var(--chip);box-shadow:inset 3px 0 0 var(--accent);font-weight:600}
+#list .it .s{color:var(--muted)}
+.stage{flex:1;display:flex;flex-direction:column;min-width:0}
+.toolbar{display:flex;gap:8px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line);background:var(--panel)}
+.toolbar .crumb{color:var(--muted);flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.toolbar .crumb b{color:var(--ink)}
+#wrap{flex:1;position:relative;overflow:hidden;background:var(--canvas)}
+svg#g{width:100%;height:100%;cursor:grab;display:block}
+svg#g.drag{cursor:grabbing}
+.node rect{rx:7;ry:7}
+.node{cursor:pointer}
+.node text.n{font-size:13px;fill:#1B2333}
+.node text.sc{font-size:10.5px;fill:#4A5361}
+.node.focus rect{stroke-width:3}
+.node.dim{opacity:.22}
+.edge{fill:none;stroke:var(--edge);stroke-width:1.3}
+.edge.exec{stroke-dasharray:5 4}
+.edge.call{stroke-dasharray:1.5 3.5;stroke:#548235}
+.edge.hi{stroke:var(--edge-hi);stroke-width:2.2}
+.edge.dim{opacity:.12}
+#detail{width:320px;flex:none;border-left:1px solid var(--line);background:var(--panel);overflow:auto;padding:14px 16px}
+#detail h2{font-size:14px;margin:0 0 2px;overflow-wrap:anywhere}
+#detail .t{color:var(--muted);font-size:12px;margin-bottom:10px}
+#detail dl{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;margin:0 0 12px}
+#detail dt{color:var(--muted)}
+#detail dd{margin:0}
+#detail h3{font-size:12px;margin:14px 0 4px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+#detail ul{list-style:none;margin:0;padding:0}
+#detail li{padding:2px 0;cursor:pointer;overflow-wrap:anywhere}
+#detail li:hover{color:var(--accent);text-decoration:underline}
+#detail li .d{color:var(--muted);font-size:11px}
+.rating{display:inline-block;padding:0 7px;border-radius:9px;font-size:11px;font-weight:600}
+.r-Low{background:#C6EFCE;color:#006100}.r-Medium{background:#FFEB9C;color:#7F6000}
+.r-High{background:#F8CBAD;color:#843C0C}.r-Very\ High{background:#FFC7CE;color:#9C0006}
+.legend{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:11.5px;padding:6px 12px;border-top:1px solid var(--line);background:var(--panel)}
+.legend svg{vertical-align:middle}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+#tip{position:fixed;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:6px 9px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.15);display:none;max-width:340px;z-index:5}
+@media (max-width:900px){aside{width:220px}#detail{display:none}}
+@media (max-width:600px){main{flex-direction:column}aside{width:auto;max-height:40vh;border-right:0;border-bottom:1px solid var(--line)}}
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Lineage</h1><span class="meta" id="meta"></span>
+  <span class="spacer"></span>
+  <button class="btn" id="theme" title="Toggle light / dark">◐</button>
+</header>
+<main>
+  <aside>
+    <div class="ctl">
+      <input type="search" id="q" placeholder="Search objects…" autocomplete="off">
+      <div class="row">
+        <label>Upstream</label><select id="up"><option>1</option><option selected>2</option><option>3</option><option>5</option><option value="99">All</option></select>
+        <label>Downstream</label><select id="down"><option>1</option><option selected>2</option><option>3</option><option>5</option><option value="99">All</option></select>
+      </div>
+      <div class="chips" id="types"></div>
+      <div class="row"><label><input type="checkbox" id="showTables" checked> show tables</label>
+        <label><input type="checkbox" id="showExec" checked> show procedure calls</label></div>
+    </div>
+    <div id="list"></div>
+  </aside>
+  <section class="stage">
+    <div class="toolbar">
+      <span class="crumb" id="crumb"></span>
+      <button class="btn" id="all">Whole datamart</button>
+      <button class="btn" id="fit">Fit</button>
+      <button class="btn" id="svgdl">Download SVG</button>
+    </div>
+    <div id="wrap"><svg id="g" xmlns="http://www.w3.org/2000/svg"><g id="vp"></g></svg><div class="empty" id="empty" hidden></div></div>
+    <div class="legend" id="legend"></div>
+  </section>
+  <section id="detail"><div class="t">Select an object to see its lineage.</div></section>
+</main>
+<div id="tip"></div>
+<script>
+const DATA = __LINEAGE_DATA__;
+const $ = s => document.querySelector(s);
+const NW = 230, NH = 46, GX = 80, GY = 14;
+const nodes = new Map(DATA.nodes.map(n => [n.id, n]));
+const typesOrder = ["Stored Procedure","Function","Materialized View","View","Databricks Mirror","External Table","Table","Cross-database object"];
+const presentTypes = typesOrder.filter(t => DATA.nodes.some(n => n.type === t));
+let typeOn = new Set(presentTypes);
+let focus = null, mode = "focus";
+
+$("#title").textContent = (DATA.meta.datamart || "Datamart") + " — object lineage";
+$("#meta").textContent = `${DATA.nodes.filter(n=>n.inventory).length} objects · ${DATA.edges.length} links · extracted ${DATA.meta.extracted || ""}`;
+
+// theme toggle
+$("#theme").onclick = () => {
+  const r = document.documentElement, dark = matchMedia("(prefers-color-scheme: dark)").matches;
+  const cur = r.dataset.theme || (dark ? "dark" : "light");
+  r.dataset.theme = cur === "dark" ? "light" : "dark";
+  try { localStorage.setItem("lineage-theme", r.dataset.theme); } catch(e) {}
+};
+try { const t = localStorage.getItem("lineage-theme"); if (t) document.documentElement.dataset.theme = t; } catch(e) {}
+
+// type chips + legend
+const chips = $("#types");
+presentTypes.forEach(t => {
+  const [fill, stroke] = DATA.colors[t] || DATA.colors.Table;
+  const c = document.createElement("span");
+  c.className = "chip"; c.innerHTML = `<span class="sw" style="background:${fill};border-color:${stroke}"></span>${t} <b>${DATA.nodes.filter(n=>n.type===t).length}</b>`;
+  c.onclick = () => { typeOn.has(t) ? typeOn.delete(t) : typeOn.add(t); c.classList.toggle("off"); renderList(); draw(); };
+  chips.appendChild(c);
+});
+$("#legend").innerHTML =
+  `<span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#7A879B" stroke-width="1.5"/></svg> reads / writes (data flows →)</span>` +
+  `<span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#7A879B" stroke-width="1.5" stroke-dasharray="5 4"/></svg> procedure called by procedure</span>` +
+  `<span><svg width="34" height="8"><line x1="0" y1="4" x2="34" y2="4" stroke="#548235" stroke-width="1.5" stroke-dasharray="1.5 3.5"/></svg> uses function</span>` +
+  `<span>Thick border = selected object · click any box to re-centre · scroll to zoom · drag to pan</span>`;
+
+// adjacency
+function visibleEdges(){
+  return DATA.edges.filter(e => ($("#showExec").checked || e.kind !== "exec"));
+}
+function nodeVisible(n){
+  if (!typeOn.has(n.type)) return false;
+  if (!$("#showTables").checked && !n.inventory) return false;
+  return true;
+}
+function adjacency(edges){
+  const out = new Map(), inn = new Map();
+  edges.forEach(e => {
+    (out.get(e.src) || out.set(e.src, []).get(e.src)).push(e.dst);
+    (inn.get(e.dst) || inn.set(e.dst, []).get(e.dst)).push(e.src);
+  });
+  return {out, inn};
+}
+function bfs(start, adj, max){
+  const seen = new Map([[start, 0]]), q = [start];
+  while (q.length){
+    const n = q.shift(), d = seen.get(n);
+    if (d >= max) continue;
+    (adj.get(n) || []).forEach(m => { if (!seen.has(m)) { seen.set(m, d + 1); q.push(m); } });
+  }
+  seen.delete(start); return seen;
+}
+
+// layered layout (same rules as scripts/lineage.py)
+function layout(ids, edges){
+  const idset = new Set(ids);
+  const le = edges.filter(e => !e.readback && idset.has(e.src) && idset.has(e.dst));
+  const out = new Map(); le.forEach(e => (out.get(e.src) || out.set(e.src, []).get(e.src)).push(e));
+  const state = new Map(), back = new Set();
+  const sorted = [...ids].sort();
+  for (const root of sorted){
+    if (state.has(root)) continue;
+    const stack = [[root, 0]]; state.set(root, 1);
+    while (stack.length){
+      const top = stack[stack.length - 1], list = out.get(top[0]) || [];
+      if (top[1] < list.length){
+        const e = list[top[1]++], m = e.dst;
+        if (state.get(m) === 1) back.add(e);
+        else if (!state.has(m)) { state.set(m, 1); stack.push([m, 0]); }
+      } else { state.set(top[0], 2); stack.pop(); }
+    }
+  }
+  const dag = le.filter(e => !back.has(e));
+  const preds = new Map(); dag.forEach(e => (preds.get(e.dst) || preds.set(e.dst, []).get(e.dst)).push(e.src));
+  const layer = new Map();
+  // iterative longest path via topological order
+  const indeg = new Map(ids.map(i => [i, 0])); dag.forEach(e => indeg.set(e.dst, indeg.get(e.dst) + 1));
+  const q = ids.filter(i => indeg.get(i) === 0).sort(); ids.forEach(i => layer.set(i, 0));
+  const outs = new Map(); dag.forEach(e => (outs.get(e.src) || outs.set(e.src, []).get(e.src)).push(e.dst));
+  while (q.length){
+    const n = q.shift();
+    (outs.get(n) || []).forEach(m => { layer.set(m, Math.max(layer.get(m), layer.get(n) + 1)); indeg.set(m, indeg.get(m) - 1); if (indeg.get(m) === 0) q.push(m); });
+  }
+  const cols = new Map();
+  sorted.forEach(n => { const l = layer.get(n); (cols.get(l) || cols.set(l, []).get(l)).push(n); });
+  const nb = new Map(ids.map(i => [i, []]));
+  edges.forEach(e => { if (idset.has(e.src) && idset.has(e.dst)) { nb.get(e.src).push(e.dst); nb.get(e.dst).push(e.src); } });
+  const idx = new Map(); cols.forEach(c => c.forEach((n, i) => idx.set(n, i)));
+  const keys = [...cols.keys()].sort((a, b) => a - b);
+  for (let it = 0; it < 6; it++){
+    keys.forEach(k => {
+      const c = cols.get(k);
+      c.sort((a, b) => bary(a) - bary(b));
+      c.forEach((n, i) => idx.set(n, i));
+    });
+  }
+  function bary(n){ const ns = nb.get(n); return ns.length ? ns.reduce((s, m) => s + idx.get(m), 0) / ns.length : idx.get(n); }
+  const tallest = Math.max(1, ...[...cols.values()].map(c => c.length));
+  const pos = new Map();
+  keys.forEach((k, ci) => {
+    const c = cols.get(k), off = (tallest - c.length) * (NH + GY) / 2;
+    c.forEach((n, i) => pos.set(n, {x: ci * (NW + GX), y: off + i * (NH + GY)}));
+  });
+  return {pos, w: keys.length * (NW + GX) - GX, h: tallest * (NH + GY) - GY};
+}
+
+// rendering
+const svg = $("#g"), vp = $("#vp");
+let view = {x: 0, y: 0, k: 1}, lastBox = {w: 1, h: 1};
+function applyView(){ vp.setAttribute("transform", `translate(${view.x},${view.y}) scale(${view.k})`); }
+function fit(){
+  const r = svg.getBoundingClientRect(), pad = 30;
+  const k = Math.min(1.4, (r.width - pad * 2) / Math.max(lastBox.w, 1), (r.height - pad * 2) / Math.max(lastBox.h, 1));
+  view.k = Math.max(0.08, k);
+  view.x = (r.width - lastBox.w * view.k) / 2; view.y = (r.height - lastBox.h * view.k) / 2; applyView();
+}
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const clip = (s, n) => s.length > n ? s.slice(0, n - 1) + "…" : s;
+
+function currentGraph(){
+  const edges = visibleEdges();
+  let ids;
+  if (mode === "all" || !focus){
+    ids = DATA.nodes.filter(nodeVisible).map(n => n.id);
+  } else {
+    const {out, inn} = adjacency(edges);
+    const up = bfs(focus, inn, +$("#up").value), down = bfs(focus, out, +$("#down").value);
+    ids = [focus, ...up.keys(), ...down.keys()].filter((v, i, a) => a.indexOf(v) === i)
+      .filter(id => id === focus || nodeVisible(nodes.get(id)));
+  }
+  const set = new Set(ids);
+  return {ids, edges: edges.filter(e => set.has(e.src) && set.has(e.dst))};
+}
+
+function draw(){
+  const {ids, edges} = currentGraph();
+  const empty = $("#empty");
+  if (!ids.length){ vp.innerHTML = ""; empty.hidden = false; empty.textContent = "Nothing to show with the current filters."; return; }
+  empty.hidden = true;
+  const {pos, w, h} = layout(ids, edges);
+  lastBox = {w, h};
+  let html = "";
+  edges.forEach((e, i) => {
+    const a = pos.get(e.src), b = pos.get(e.dst);
+    let d;
+    if (b.x > a.x){
+      const x1 = a.x + NW, y1 = a.y + NH / 2, x2 = b.x - 2, y2 = b.y + NH / 2, mx = (x1 + x2) / 2;
+      d = `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    } else {
+      const x1 = a.x + NW / 2, y1 = a.y + NH, x2 = b.x + NW / 2, y2 = b.y + NH + 2, dy = 40 + Math.abs(x1 - x2) * 0.15;
+      d = `M${x1},${y1} C${x1},${y1 + dy} ${x2},${y2 + dy} ${x2},${y2}`;
+    }
+    html += `<path class="edge ${e.kind}" data-s="${esc(e.src)}" data-d="${esc(e.dst)}" d="${d}" marker-end="url(#arr-${e.kind})"/>`;
+  });
+  ids.forEach(id => {
+    const n = nodes.get(id), p = pos.get(id), [fill, stroke] = DATA.colors[n.type] || DATA.colors.Table;
+    html += `<g class="node${id === focus && mode !== "all" ? " focus" : ""}" data-id="${esc(id)}" transform="translate(${p.x},${p.y})">` +
+      `<rect width="${NW}" height="${NH}" fill="${fill}" stroke="${id === focus && mode !== "all" ? "var(--focus)" : stroke}" stroke-width="1.3"${n.type === "Cross-database object" ? ' stroke-dasharray="4 3"' : ""}/>` +
+      `<rect width="5" height="${NH}" fill="${stroke}" rx="2"/>` +
+      `<text class="sc" x="13" y="17">${esc(clip(n.schema + " · " + n.type, 36))}</text>` +
+      `<text class="n" x="13" y="34" font-weight="${id === focus ? 700 : 500}">${esc(clip(n.name, 30))}</text></g>`;
+  });
+  vp.innerHTML = `<defs>${["data","exec","call"].map(k => `<marker id="arr-${k}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${k === "call" ? "#548235" : "#7A879B"}"/></marker>`).join("")}</defs>` + html;
+  fit();
+  const nn = ids.length;
+  $("#crumb").innerHTML = mode === "all" || !focus ? `<b>Whole datamart</b> · ${nn} boxes, ${edges.length} links` :
+    `<b>${esc(focus)}</b> · ${nn} boxes · upstream ${$("#up").selectedOptions[0].text}, downstream ${$("#down").selectedOptions[0].text}`;
+}
+
+// interactions
+let drag = null;
+svg.addEventListener("mousedown", e => { if (e.target.closest(".node")) return; drag = {x: e.clientX - view.x, y: e.clientY - view.y}; svg.classList.add("drag"); });
+addEventListener("mousemove", e => { if (drag){ view.x = e.clientX - drag.x; view.y = e.clientY - drag.y; applyView(); } });
+addEventListener("mouseup", () => { drag = null; svg.classList.remove("drag"); });
+svg.addEventListener("wheel", e => {
+  e.preventDefault();
+  const r = svg.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+  const k = Math.min(4, Math.max(0.05, view.k * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+  view.x = mx - (mx - view.x) * k / view.k; view.y = my - (my - view.y) * k / view.k; view.k = k; applyView();
+}, {passive: false});
+vp.addEventListener("click", e => { const g = e.target.closest(".node"); if (g) select(g.dataset.id); });
+const tip = $("#tip");
+vp.addEventListener("mouseover", e => {
+  const g = e.target.closest(".node"); if (!g) return;
+  const id = g.dataset.id, n = nodes.get(id);
+  vp.querySelectorAll(".edge").forEach(p => { const on = p.dataset.s === id || p.dataset.d === id; p.classList.toggle("hi", on); p.classList.toggle("dim", !on); });
+  tip.innerHTML = `<b>${esc(id)}</b><br>${esc(n.type)}${n.rating ? ` · <span class="rating r-${n.rating}">${n.rating}</span>` : ""}${n.lines ? ` · ${n.lines} lines` : ""}${n.wave ? ` · wave ${n.wave}` : ""}`;
+  tip.style.display = "block";
+});
+vp.addEventListener("mousemove", e => { tip.style.left = (e.clientX + 14) + "px"; tip.style.top = (e.clientY + 12) + "px"; });
+vp.addEventListener("mouseout", e => { if (e.target.closest(".node")){ tip.style.display = "none"; vp.querySelectorAll(".edge").forEach(p => p.classList.remove("hi", "dim")); } });
+
+function select(id){
+  focus = id; mode = "focus";
+  try { history.replaceState(null, "", "#" + encodeURIComponent(id)); } catch(e) {}
+  renderList(); draw(); renderDetail();
+}
+function renderDetail(){
+  const n = nodes.get(focus); if (!n) return;
+  const edges = visibleEdges(), {out, inn} = adjacency(edges);
+  const ups = [...bfs(focus, inn, 99)], downs = [...bfs(focus, out, 99)];
+  const li = arr => arr.length ? arr.sort((a, b) => a[1] - b[1] || a[0].localeCompare(b[0]))
+      .map(([k, d]) => `<li data-id="${esc(k)}">${esc(k)} <span class="d">${esc(nodes.get(k).type)} · ${d} hop${d > 1 ? "s" : ""}</span></li>`).join("") : `<li class="d">none</li>`;
+  $("#detail").innerHTML = `<h2>${esc(n.id)}</h2><div class="t">${esc(n.type)}${n.inventory ? "" : " (not in this inventory)"}</div>
+    <dl>${n.rating ? `<dt>Complexity</dt><dd><span class="rating r-${n.rating}">${n.rating}</span> ${n.score ?? ""}</dd>` : ""}
+    ${n.lines ? `<dt>Lines</dt><dd>${n.lines}</dd>` : ""}
+    ${n.wave != null ? `<dt>Migration wave</dt><dd>${n.wave}${n.cyclic ? " (circular dependency)" : ""}</dd>` : ""}
+    ${n.location ? `<dt>Location</dt><dd>${esc(n.location)}</dd>` : ""}
+    ${n.evidence ? `<dt>Mirror evidence</dt><dd>${esc(n.evidence)}</dd>` : ""}
+    ${n.features && n.features.length ? `<dt>Patterns</dt><dd>${esc(n.features.join(", "))}</dd>` : ""}</dl>
+    <h3>Upstream (${ups.length}) — feeds this</h3><ul>${li(ups)}</ul>
+    <h3>Downstream (${downs.length}) — impacted by changes</h3><ul>${li(downs)}</ul>`;
+  $("#detail").querySelectorAll("li[data-id]").forEach(l => l.onclick = () => select(l.dataset.id));
+}
+function renderList(){
+  const q = $("#q").value.trim().toLowerCase();
+  let html = "";
+  presentTypes.filter(t => typeOn.has(t)).forEach(t => {
+    const items = DATA.nodes.filter(n => n.type === t && (!q || n.id.toLowerCase().includes(q)) && ($("#showTables").checked || n.inventory));
+    if (!items.length) return;
+    html += `<div class="grp">${t} (${items.length})</div>` + items.map(n =>
+      `<div class="it${n.id === focus ? " sel" : ""}" data-id="${esc(n.id)}" title="${esc(n.id)}"><span class="s">${esc(n.schema)}.</span>${esc(n.name)}</div>`).join("");
+  });
+  $("#list").innerHTML = html || `<div class="grp">No matches</div>`;
+}
+$("#list").addEventListener("click", e => { const it = e.target.closest(".it"); if (it) select(it.dataset.id); });
+$("#q").addEventListener("input", renderList);
+$("#q").addEventListener("keydown", e => { if (e.key === "Enter"){ const it = $("#list .it"); if (it) select(it.dataset.id); } });
+["#up", "#down", "#showTables", "#showExec"].forEach(s => $(s).addEventListener("change", () => { renderList(); draw(); if (focus) renderDetail(); }));
+$("#all").onclick = () => { mode = "all"; draw(); };
+$("#fit").onclick = fit;
+addEventListener("resize", fit);
+$("#svgdl").onclick = () => {
+  const r = vp.getBBox(), clone = vp.cloneNode(true);
+  clone.setAttribute("transform", `translate(${-r.x + 20},${-r.y + 20})`);
+  const css = `.edge{fill:none;stroke:#7A879B;stroke-width:1.3}.edge.exec{stroke-dasharray:5 4}.edge.call{stroke-dasharray:1.5 3.5;stroke:#548235}text{font-family:Segoe UI,Arial,sans-serif}.n{font-size:12px;fill:#1B2333}.sc{font-size:10px;fill:#5E6878}`;
+  const s = `<svg xmlns="http://www.w3.org/2000/svg" width="${r.width + 40}" height="${r.height + 40}"><style>${css}</style><rect width="100%" height="100%" fill="#fff"/>${clone.outerHTML.replace(/var\(--focus\)/g, "#1F3864")}</svg>`;
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([s], {type: "image/svg+xml"}));
+  a.download = (focus && mode !== "all" ? focus : (DATA.meta.datamart || "datamart")) + "_lineage.svg"; a.click();
+};
+
+// start: hash focus, else most-connected object
+renderList();
+const fromHash = decodeURIComponent(location.hash.slice(1));
+if (nodes.has(fromHash)) select(fromHash);
+else {
+  const deg = new Map(); DATA.edges.forEach(e => { deg.set(e.src, (deg.get(e.src) || 0) + 1); deg.set(e.dst, (deg.get(e.dst) || 0) + 1); });
+  const start = DATA.nodes.filter(n => n.inventory).sort((a, b) => (deg.get(b.id) || 0) - (deg.get(a.id) || 0))[0];
+  if (start) select(start.id); else { mode = "all"; draw(); }
+}
+</script>
+</body>
+</html>
