@@ -123,6 +123,49 @@ ADO.NET/ODBC (`Server=tcp:host,1433;Initial Catalog=db;…`), and the Synapse St
 Only the server and database are taken from it; authentication still comes from `SYNAPSE_AUTH` (default: your `az login`),
 so a password inside a pasted string is ignored — don't paste strings containing passwords into chat.
 
+## 4f. Locked-down / production machine — export, then build in VS Code with no installs
+
+Only **Python 3.8+** is needed to build the Excel report — no `pip install`, no ODBC driver, no extensions
+(the Excel library is bundled in `scripts/_vendor`). Check in the VS Code terminal: `python --version`
+(or `py --version`). No Python at all? Build on another machine, or attach the export in Claude.
+
+**1. Export the definitions (your existing SQL connection)**
+1. SQL Server panel → right-click the datamart connection → **New Query**.
+2. Paste all of `assets/export_definitions.sql` and run it (`Ctrl+Shift+E`).
+3. Results grid → icons on its right edge → **Save as JSON** (CSV / Excel also work), e.g. `bidw_definitions.json`.
+   Save it inside the opened folder so VS Code can see it.
+
+**2. Build the Excel report — pick one**
+- **VS Code task (no typing):** open the saved JSON in the editor → **Terminal → Run Task…** →
+  *Synapse inventory: build Excel from the open export file* → choose the Python command, client and target.
+  Works when the skill folder is the opened folder (tasks are in `.vscode/tasks.json`).
+- **Terminal:**
+  ```bash
+  python scripts/inventory.py bidw_definitions.json --client CCEP --target databricks --open
+  ```
+- **Copilot Chat (Agent mode):** *"Use the synapse-datamart-inventory skill to build the Excel report from
+  bidw_definitions.json for client CCEP. Don't install any packages."* — approve the terminal command when asked.
+
+Output: `output/bidw/bidw_Object_Inventory.xlsx` and `output/bidw/bidw_Object_Inventory_Lineage.html`
+(`--open` opens the lineage explorer in the browser). The datamart name comes from the file name; override with `--datamart`.
+
+The query is read-only (catalog views only, no table data). Long definitions are split into 4,000-character
+chunks so the results grid can't truncate them; the skill stitches them back together and warns if a chunk is missing.
+Without matplotlib the *Lineage Diagrams* sheet is skipped; the HTML explorer has every diagram.
+
+**Option B — SQL Database Project (dedicated pool only)**
+Needs the **SQL Database Projects** extension (usually installed alongside the mssql extension).
+1. SQL Server panel → right-click the connection/database → **Create Project from Database**
+   (or Command Palette → *Database Projects: Create Project From Database*).
+2. Choose a folder, project name, and folder structure **Schema/Object Type**; target platform is detected as
+   *Azure Synapse Dedicated SQL Pool*.
+3. Build from the project folder (same machine is fine — no installs needed):
+   ```bash
+   python scripts/inventory.py ./dm_red_project --datamart dm_red --client CCEP
+   ```
+Serverless pools can't be imported as a project — use Option A there.
+Without the extension, Visual Studio (SSDT) → SQL Server Database Project → **Import → Database** gives the same result.
+
 ## 5. Run the skill from Copilot Chat
 
 1. Open Copilot Chat, switch the mode picker to **Agent** (skills and terminal commands need agent mode).
@@ -146,5 +189,8 @@ so a password inside a pasted string is ignored — don't paste strings containi
 | `DefaultAzureCredential failed` | Run `az login`; or use `SYNAPSE_AUTH=ActiveDirectoryInteractive` on Windows |
 | Definitions empty / "not readable" | Missing VIEW DEFINITION, or object is `WITH ENCRYPTION` |
 | Materialized views show as views | Serverless endpoint (no MVs) or `sys.pdw_materialized_view_*` not visible — see About sheet warnings |
+| `'python' is not recognized` / opens Microsoft Store | Use `py` instead (Windows launcher); in the task pick `py` |
+| `f-string` / `SyntaxError` on an old Python | Python 3.8+ is required — check `python --version` |
+| No Lineage Diagrams sheet | matplotlib isn't installed — expected; use the `_Lineage.html` explorer |
 | Copilot doesn't use the skill | Agent mode on? Folder name = `name:` in SKILL.md? Ask by name: "use the synapse-datamart-inventory skill" |
 | No network to the client at all | Export scripts (SSMS Generate Scripts / `sqlpackage /a:Extract` / git repo) and use folder mode |

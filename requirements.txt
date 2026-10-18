@@ -1,4 +1,6 @@
-openpyxl>=3.1
+# Not needed for export/folder mode: openpyxl is bundled in scripts/_vendor, so only Python 3.8+ is required.
+# Optional - Excel lineage diagram images:
+matplotlib>=3.7
+# Live mode only (connect straight to Synapse):
 pyodbc>=5.0
 azure-identity>=1.15
-matplotlib>=3.7

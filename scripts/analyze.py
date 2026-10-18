@@ -142,7 +142,8 @@ def parse_parameters(clean, raw):
     head = _header(clean, raw)
     params = []
     for m in re.finditer(r"(@\w+)\s+(?:AS\s+)?(\[?[A-Za-z_][\w\.]*\]?(?:\s*\(\s*[\w\s,]*\))?)(\s*=\s*(?:N?'[^']*'|[^,]+?))?(\s+(?:OUTPUT|OUT)\b)?\s*(?=,|\)|$|READONLY)", head, re.I | re.S):
-        p = f"{m.group(1)} {re.sub(r'[\s\[\]]+', '', m.group(2)).upper()}"
+        ptype = re.sub(r"[\s\[\]]+", "", m.group(2)).upper()
+        p = m.group(1) + " " + ptype
         if m.group(3):
             p += " " + re.sub(r"\s+", " ", m.group(3).strip())
         if m.group(4):

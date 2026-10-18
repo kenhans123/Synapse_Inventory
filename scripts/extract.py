@@ -23,6 +23,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _bootstrap  # noqa: E402,F401  (bundled openpyxl for reading .xlsx exports)
+
 DEFAULT_MIRROR_PATTERN = r"mirror|dbx|databricks|delta|unity|abfss://[^'\"]*(lakehouse|delta|uc)"
 
 TYPE_MAP = {
@@ -122,19 +125,29 @@ def _connect(args):
 def test_connection(args):
     conn = _connect(args)
     cur = conn.cursor()
-    cur.execute("SELECT @@VERSION, DB_NAME(), SUSER_SNAME(), "
-                "HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'VIEW DEFINITION')")
-    ver, db, who, can_view = cur.fetchone()
-    cur.execute("SELECT RTRIM(type) AS t, COUNT(*) FROM sys.objects WHERE is_ms_shipped = 0 "
-                "AND RTRIM(type) IN ('P','FN','IF','TF','V') GROUP BY RTRIM(type)")
-    counts = {TYPE_MAP.get(t, t) + (f" ({FUNC_KIND[t]})" if t in FUNC_KIND else ""): n for t, n in cur.fetchall()}
+
+    def one(sql):
+        try:
+            cur.execute(sql)
+            return cur.fetchone()
+        except Exception as e:  # function not supported on this pool type
+            return ("n/a: " + str(e).splitlines()[0][:80],)
+
+    db, who = one("SELECT DB_NAME(), SUSER_SNAME()")
+    ver = one("SELECT @@VERSION")[0]
+    can_view = one("SELECT HAS_PERMS_BY_NAME(DB_NAME(), 'DATABASE', 'VIEW DEFINITION')")[0]
+    cur.execute("SELECT RTRIM(o.type) AS t, COUNT(*) AS n, SUM(CASE WHEN m.definition IS NULL THEN 1 ELSE 0 END) AS hidden "
+                "FROM sys.objects o LEFT JOIN sys.sql_modules m ON m.object_id = o.object_id "
+                "WHERE o.is_ms_shipped = 0 AND RTRIM(o.type) IN ('P','FN','IF','TF','V') GROUP BY RTRIM(o.type)")
+    rows = cur.fetchall()
+    counts = {TYPE_MAP.get(t, t) + (f" ({FUNC_KIND[t]})" if t in FUNC_KIND else ""): n for t, n, _ in rows}
+    hidden = sum(h or 0 for *_, h in rows)
     conn.close()
     print(json.dumps({"connected": True, "database": db, "login": who,
-                      "view_definition_permission": bool(can_view),
-                      "engine": ver.splitlines()[0].strip()[:100], "object_counts": counts}, indent=1))
-    if not can_view:
-        print("WARNING: without VIEW DEFINITION, definitions come back empty. Ask a DBA for: "
-              f"GRANT VIEW DEFINITION TO [{who}];")
+                      "view_definition_permission": can_view, "definitions_not_readable": hidden,
+                      "engine": str(ver).splitlines()[0].strip()[:100], "object_counts": counts}, indent=1))
+    if hidden:
+        print(f"WARNING: {hidden} definitions are not readable. Ask a DBA for: GRANT VIEW DEFINITION TO [{who}];")
 
 
 def _rows(cur, sql):
@@ -167,7 +180,7 @@ def extract_live(args):
     modules = _rows(cur, f"""
         SELECT s.name AS schema_name, o.name AS object_name, o.object_id, RTRIM(o.type) AS type_code,
                o.create_date, o.modify_date,
-               COALESCE(m.definition, OBJECT_DEFINITION(o.object_id)) AS definition
+               m.definition AS definition
         FROM sys.objects o
         JOIN sys.schemas s ON s.schema_id = o.schema_id
         LEFT JOIN sys.sql_modules m ON m.object_id = o.object_id
@@ -183,9 +196,10 @@ def extract_live(args):
 
     params = {}
     for r in _try_rows(cur, """
-        SELECT p.object_id, p.name, TYPE_NAME(p.user_type_id) AS type_name, p.max_length, p.precision,
+        SELECT p.object_id, p.name, ty.name AS type_name, p.max_length, p.precision,
                p.scale, p.is_output, p.parameter_id
-        FROM sys.parameters p ORDER BY p.object_id, p.parameter_id""", warnings, "parameters"):
+        FROM sys.parameters p JOIN sys.types ty ON ty.user_type_id = p.user_type_id
+        ORDER BY p.object_id, p.parameter_id""", warnings, "parameters"):
         if not r["name"]:
             continue  # return value of scalar function
         t = r["type_name"]
@@ -237,8 +251,9 @@ def extract_live(args):
     cols = {}
     if ext:
         for r in _rows(cur, """
-            SELECT c.object_id, c.name, TYPE_NAME(c.user_type_id) AS type_name, c.max_length, c.precision, c.scale, c.is_nullable
+            SELECT c.object_id, c.name, ty.name AS type_name, c.max_length, c.precision, c.scale, c.is_nullable
             FROM sys.columns c JOIN sys.external_tables et ON et.object_id = c.object_id
+            JOIN sys.types ty ON ty.user_type_id = c.user_type_id
             ORDER BY c.object_id, c.column_id"""):
             t = r["type_name"]
             if t in ("varchar", "char"):
@@ -355,6 +370,108 @@ def extract_folder(args):
     return objects, warnings, {"mode": "folder", "path": os.path.abspath(args.path)}
 
 
+# --------------------------------------------------------------------------- export (query results)
+def _read_export_rows(path):
+    """Rows from a results-grid export of assets/export_definitions.sql (JSON, CSV or XLSX)."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".json":
+        data = json.load(open(path, encoding="utf-8-sig"))
+        if isinstance(data, dict):  # some tools wrap rows
+            data = next((v for v in data.values() if isinstance(v, list)), [])
+        return data
+    if ext == ".csv":
+        import csv
+        csv.field_size_limit(min(sys.maxsize, 2 ** 31 - 1))
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            return list(csv.DictReader(fh))
+    if ext in (".xlsx", ".xlsm"):
+        from openpyxl import load_workbook
+        ws = load_workbook(path, read_only=True, data_only=True).worksheets[0]
+        it = ws.iter_rows(values_only=True)
+        hdr = [str(h).strip() if h is not None else "" for h in next(it)]
+        return [dict(zip(hdr, r)) for r in it]
+    raise ValueError(f"Unsupported export file type: {path} (use .json, .csv or .xlsx)")
+
+
+def _val(v):
+    if v is None:
+        return None
+    if isinstance(v, str) and v.strip().upper() == "NULL":
+        return None
+    return v
+
+
+def extract_export(args):
+    files = []
+    if os.path.isdir(args.path):
+        for root, _, names in os.walk(args.path):
+            files += [os.path.join(root, n) for n in names if n.lower().endswith((".json", ".csv", ".xlsx", ".xlsm"))]
+    else:
+        files = [args.path]
+    warnings, grouped = [], {}
+    required = {"object_schema", "object_name", "type_code", "chunk_no", "chunk_text"}
+    for f in sorted(files):
+        rows = _read_export_rows(f)
+        if not rows:
+            warnings.append(f"{f}: no rows")
+            continue
+        cols = {str(k).strip().lower() for k in rows[0].keys()}
+        if not required <= cols:
+            warnings.append(f"{f}: skipped - not an export of export_definitions.sql (missing {sorted(required - cols)})")
+            continue
+        for r in rows:
+            r = {str(k).strip().lower(): v for k, v in r.items()}
+            key = (r["object_schema"], r["object_name"], str(r["type_code"]).strip())
+            g = grouped.setdefault(key, {"meta": r, "chunks": {}})
+            try:
+                n = int(float(r["chunk_no"]))
+            except (TypeError, ValueError):
+                n = 0
+            g["chunks"][n] = "" if _val(r.get("chunk_text")) is None else str(r["chunk_text"])
+    objects = []
+    for (schema, name, code), g in grouped.items():
+        r = g["meta"]
+        nums = sorted(g["chunks"])
+        if code != "ET" and nums and nums != list(range(nums[-1] + 1)):
+            warnings.append(f"{schema}.{name}: missing definition chunks {sorted(set(range(nums[-1] + 1)) - set(nums))}")
+        text = "".join(g["chunks"][n] for n in nums).replace("\r\n", "\n")
+        is_mv = str(_val(r.get("is_materialized")) or "0").strip().lower() in ("1", "true", "1.0")
+        if code == "ET":
+            parts = [g["chunks"][n] for n in nums]
+            cols = [c for p in parts for c in (p.split("|") if len(parts) == 1 else [p]) if c and c.strip()]
+            definition = (f"CREATE EXTERNAL TABLE [{schema}].[{name}]\n(\n    " + ",\n    ".join(cols) + "\n)\nWITH (\n"
+                          f"    LOCATION = '{_val(r.get('location'))}',\n    DATA_SOURCE = [{_val(r.get('data_source'))}],\n"
+                          f"    FILE_FORMAT = [{_val(r.get('file_format'))}]\n);"
+                          f"\n-- data source location: {_val(r.get('data_source_location'))}"
+                          f"\n-- file format type: {_val(r.get('format_type'))}")
+            cc = _val(r.get("column_count"))
+            objects.append({
+                "schema": schema, "name": name, "object_type": "External Table", "type_code": "ET",
+                "created": _val(r.get("created")), "modified": _val(r.get("modified")),
+                "definition": definition, "definition_available": True,
+                "location": _val(r.get("location")), "data_source": _val(r.get("data_source")),
+                "data_source_location": _val(r.get("data_source_location")), "file_format": _val(r.get("file_format")),
+                "format_type": _val(r.get("format_type")), "column_count": int(float(cc)) if cc not in (None, "") else len(cols),
+                "source": f"{os.path.basename(args.path)} (external table, definition reconstructed)",
+            })
+            continue
+        otype = TYPE_MAP.get(code, code)
+        if code == "V" and (is_mv or re.match(r"\s*CREATE\s+MATERIALIZED\s+VIEW", text, re.I)):
+            otype = "Materialized View"
+        objects.append({
+            "schema": schema, "name": name, "object_type": otype, "type_code": code,
+            "function_kind": FUNC_KIND.get(code),
+            "created": _val(r.get("created")), "modified": _val(r.get("modified")),
+            "definition": text, "definition_available": bool(text.strip()),
+            "source": os.path.basename(args.path),
+        })
+        if not text.strip():
+            warnings.append(f"{schema}.{name}: empty definition (needs VIEW DEFINITION, or object is encrypted)")
+    if not objects:
+        warnings.append("No objects found - check the file is the saved result of export_definitions.sql")
+    return objects, warnings, {"mode": "export", "path": os.path.abspath(args.path)}
+
+
 # --------------------------------------------------------------------------- mirror classification
 def classify_mirrors(objects, pattern):
     rx = re.compile(pattern, re.I)
@@ -399,9 +516,11 @@ def main():
     lv.add_argument("--connection-string", default=env("SYNAPSE_CONNECTION_STRING"))
     lv.add_argument("--schemas", default=env("SYNAPSE_SCHEMAS"), help="comma-separated schema filter")
     lv.add_argument("--test-connection", action="store_true", help="connect, report permissions and object counts, then exit")
-    fd = sub.add_parser("folder", help="read exported .sql scripts")
+    fd = sub.add_parser("folder", help="read exported .sql scripts (SQL project, sqlpackage, Generate Scripts)")
     fd.add_argument("--path", required=True)
-    for p in (lv, fd):
+    ex = sub.add_parser("export", help="read the saved results of assets/export_definitions.sql (.json/.csv/.xlsx)")
+    ex.add_argument("--path", required=True, help="saved results file, or a folder of them")
+    for p in (lv, fd, ex):
         p.add_argument("--out", default="inventory.json")
         p.add_argument("--mirror-pattern", default=DEFAULT_MIRROR_PATTERN,
                        help="regex identifying Databricks mirror objects by name/location/data source")
@@ -420,7 +539,7 @@ def main():
     if args.mode == "live" and args.test_connection:
         return test_connection(args)
 
-    objects, warnings, meta = extract_live(args) if args.mode == "live" else extract_folder(args)
+    objects, warnings, meta = {"live": extract_live, "folder": extract_folder, "export": extract_export}[args.mode](args)
     classify_mirrors(objects, args.mirror_pattern)
     meta.update({
         "datamart": args.datamart or meta.get("database") or os.path.basename(os.path.abspath(meta.get("path", "."))),
@@ -428,6 +547,7 @@ def main():
         "mirror_pattern": args.mirror_pattern,
         "warnings": warnings,
     })
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump({"meta": meta, "objects": objects}, fh, indent=1, default=str)
     counts = {}

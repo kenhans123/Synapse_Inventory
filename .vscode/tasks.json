@@ -1,0 +1,54 @@
+{
+  // Synapse datamart inventory - run from Terminal > Run Task... (or Ctrl+Shift+P > "Tasks: Run Task").
+  // Works when this skill folder is the open VS Code folder. If the skill lives in .github/skills/synapse-datamart-inventory,
+  // copy this file to <workspace>/.vscode/tasks.json and change "${workspaceFolder}/scripts" to
+  // "${workspaceFolder}/.github/skills/synapse-datamart-inventory/scripts".
+  // Needs only Python 3.8+ (no pip install).
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Synapse inventory: build Excel from the open export file",
+      "detail": "Open the saved JSON/CSV/XLSX from export_definitions.sql in the editor first, then run this task.",
+      "type": "shell",
+      "command": "${input:python}",
+      "args": [
+        "${workspaceFolder}/scripts/inventory.py", "${file}",
+        "--client", "${input:client}", "--target", "${input:target}", "--open"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "Synapse inventory: build Excel from a file or .sql folder path",
+      "type": "shell",
+      "command": "${input:python}",
+      "args": [
+        "${workspaceFolder}/scripts/inventory.py", "${input:source}",
+        "--datamart", "${input:datamart}",
+        "--client", "${input:client}", "--target", "${input:target}", "--open"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    },
+    {
+      "label": "Synapse inventory: test with the bundled sample datamart",
+      "type": "shell",
+      "command": "${input:python}",
+      "args": ["${workspaceFolder}/scripts/inventory.py", "${workspaceFolder}/assets/sample_sql", "--datamart", "SAMPLE", "--open"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+    }
+  ],
+  "inputs": [
+    { "id": "python", "type": "pickString", "description": "Python command on this machine",
+      "options": ["python", "py", "python3"], "default": "python" },
+    { "id": "source", "type": "promptString", "description": "Path to the saved export (.json/.csv/.xlsx) or a folder of .sql files" },
+    { "id": "datamart", "type": "promptString", "description": "Datamart name (used in the report and file names)" },
+    { "id": "client", "type": "promptString", "description": "Client / engagement name (optional)", "default": "" },
+    { "id": "target", "type": "pickString", "description": "Migration target for the notes",
+      "options": ["databricks", "fabric"], "default": "databricks" }
+  ]
+}

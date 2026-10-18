@@ -6,13 +6,31 @@ argument-hint: "<database or script folder> [--target databricks|fabric] [--clie
 
 # Synapse Datamart Object Inventory
 
-Produces `<Datamart>_Object_Inventory.xlsx` from a Synapse datamart in two steps:
+Produces `<Datamart>_Object_Inventory.xlsx` and `<Datamart>_Object_Inventory_Lineage.html` from a Synapse datamart.
+
+## Quick path (most common): user has an export file or a .sql folder
+
+One command, **Python 3.8+ only — no `pip install`** (openpyxl is bundled in `scripts/_vendor`):
+
+```bash
+python scripts/inventory.py <saved export .json/.csv/.xlsx | folder of .sql> [--datamart NAME] [--client NAME] [--target databricks|fabric]
+```
+Outputs go to `output/<datamart>/` under the current folder. Run it from the workspace root.
+On Windows try `python`, then `py`, then `python3`. Never run `pip install` unless the user says installing is allowed.
+If the user has no export yet, give them `assets/export_definitions.sql` and the steps in
+`references/vscode-setup.md` §4f (run in their SQL connection → results grid → Save as JSON).
+In VS Code the same build is available as a task: Terminal → Run Task → "Synapse inventory: …" (`.vscode/tasks.json`).
+
+Lineage Diagrams (images inside Excel) need matplotlib; without it that one sheet is skipped and the HTML explorer
+carries all diagrams. Everything else is identical.
+
+## Full path (two steps)
 
 1. `scripts/extract.py` — reads object definitions into `inventory.json`
 2. `scripts/build_report.py` — analyses the T-SQL and writes the Excel workbook
 
-Requirements: `pip install -r requirements.txt` (openpyxl; pyodbc + azure-identity for live mode) and
-**ODBC Driver 18 for SQL Server** for live mode. VS Code / GitHub Copilot setup: `references/vscode-setup.md`.
+Requirements: Python 3.8+. Live mode additionally needs `pyodbc` + `azure-identity` (`requirements.txt`) and
+**ODBC Driver 18 for SQL Server**. VS Code / GitHub Copilot setup: `references/vscode-setup.md`.
 
 Paths below are relative to this skill's folder (in VS Code: `.github/skills/synapse-datamart-inventory/`).
 Run commands from the workspace root so `.env` is picked up; write outputs to `output/` there.
@@ -25,6 +43,12 @@ Ask only what is missing:
 |---|---|---|
 | **Live** | User can reach the dedicated / serverless SQL endpoint (their machine, VPN, or a linked device shell) | `python scripts/extract.py live --test-connection` then `python scripts/extract.py live --out output/inventory.json` |
 | **Folder** | User has scripts: SSDT/`.sqlproj`, `sqlpackage /a:Extract`, SSMS *Generate Scripts*, or a git repo | `python scripts/extract.py folder --path <dir> --out inventory.json` |
+| **Export** | No installs allowed where the connection is (e.g. production). User runs `assets/export_definitions.sql` in their existing SQL connection and saves the results grid as JSON/CSV/Excel | `python scripts/extract.py export --path <saved file> --datamart <name> --out output/inventory.json` |
+
+Export and folder modes need no ODBC driver, pyodbc, azure-identity or pip install — just Python 3.8+,
+so they run on locked-down / production machines, on any other machine, or in Claude from the exported file.
+A SQL Database Project made with VS Code "Create Project from Database" (dedicated pool) is a folder of .sql
+files — use folder mode on it.
 
 The cloud workspace usually cannot reach a customer Synapse endpoint (network allowlist, private endpoints, MFA).
 If live access isn't possible from here, either run the scripts on the user's machine through the device shell,
@@ -43,7 +67,7 @@ Auth (`SYNAPSE_AUTH` / `--auth`): `token` (default — the user's `az login` / V
 Always run `--test-connection` first. If it fails, use the troubleshooting table in `references/vscode-setup.md`.
 If `view_definition_permission` is false, stop and tell the user the GRANT they need.
 
-What live mode reads: `sys.objects` + `sys.sql_modules` / `OBJECT_DEFINITION` (procs, functions, views),
+What live mode reads: `sys.objects` + `sys.sql_modules` (procs, functions, views),
 `sys.pdw_materialized_view_*` (materialized views), `sys.parameters`, `sys.sql_expression_dependencies`,
 and `sys.external_tables` / `external_data_sources` / `external_file_formats` / `sys.columns`
 (external table DDL is reconstructed). Catalog views missing on serverless pools are skipped and logged as warnings.

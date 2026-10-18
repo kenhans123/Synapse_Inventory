@@ -11,6 +11,9 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import _bootstrap  # noqa: E402,F401  (bundled openpyxl fallback - no pip install needed)
+
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.chart import BarChart, Reference
@@ -19,7 +22,6 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from analyze import FEATURES, FEATURE_BY_KEY, RATING_BANDS, analyze  # noqa: E402
 import lineage as lin  # noqa: E402
 
@@ -417,6 +419,10 @@ def write_lineage(wb, objects, nodes, edges, waves, cyclic, anchors, html_name, 
         c = put(ws, 3, 1, f"Open the interactive lineage explorer: {html_name}  (same folder as this workbook)",
                 Font(name=FONT, size=10, color="0563C1", underline="single"))
         c.hyperlink = html_name
+    if not images:
+        put(ws, 4, 1, "Diagram images were not added to this workbook (matplotlib not available or turned off) - "
+            "use the interactive lineage explorer above for the diagrams.",
+            Font(name=FONT, italic=True, size=9, color="595959"))
     headers = ["#", "Object (→ diagram)", "Type", "Rating", "Migration Wave", "Direct Upstream", "Direct Downstream",
                "Upstream (all)", "Downstream (all)", "Circular Dependency", "Definition"]
     header_row(ws, 5, headers, [5, 40, 18, 11, 10, 44, 44, 10, 11, 11, 12])
@@ -512,6 +518,7 @@ def main():
     ap.add_argument("--lineage-html", help="path for the interactive explorer (default: <out>_Lineage.html)")
     a = ap.parse_args()
 
+    os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     data = json.load(open(a.inp, encoding="utf-8"))
     meta, objects = data["meta"], data["objects"]
     objects.sort(key=lambda o: (TYPE_ORDER.index(o["object_type"]) if o["object_type"] in TYPE_ORDER else 99,
@@ -531,7 +538,7 @@ def main():
             write_type_sheet(wb, t, objs, anchors)
     write_features(wb, objects)
     write_dependencies(wb, deps)
-    html_path = None
+    html_path, notes = None, []
     if not a.no_lineage:
         nodes, edges = lin.build_graph(objects, deps)
         waves, cyclic = lin.migration_waves(nodes, edges)
@@ -539,8 +546,15 @@ def main():
             o["migration_wave"] = waves.get(o["full_name"])
         html_path = a.lineage_html or os.path.splitext(a.out)[0] + "_Lineage.html"
         lin.write_html(nodes, edges, waves, cyclic, meta, html_path)
-        rel = os.path.relpath(html_path, os.path.dirname(os.path.abspath(a.out)) or ".")
-        write_lineage(wb, objects, nodes, edges, waves, cyclic, anchors, rel, not a.no_lineage_images,
+        try:
+            rel = os.path.relpath(html_path, os.path.dirname(os.path.abspath(a.out)) or ".")
+        except ValueError:   # different drive on Windows
+            rel = os.path.abspath(html_path)
+        images = not a.no_lineage_images
+        if images and not _bootstrap.has_matplotlib():
+            images = False
+            notes.append("matplotlib not available: Lineage Diagrams sheet skipped - the HTML explorer has all diagrams")
+        write_lineage(wb, objects, nodes, edges, waves, cyclic, anchors, rel, images,
                       a.lineage_depth, a.max_diagrams)
     write_about(wb, meta)
     # order: Summary, Inventory, type sheets, Feature Matrix, Dependencies, Definitions, About
@@ -553,7 +567,7 @@ def main():
     for o in objects:
         counts[o["object_type"]] = counts.get(o["object_type"], 0) + 1
     print(json.dumps({"out": a.out, "objects": len(objects), "by_type": counts, "dependencies": len(deps),
-                      "lineage_html": html_path}, indent=1))
+                      "lineage_html": html_path, "notes": notes}, indent=1, ensure_ascii=False))
 
 
 if __name__ == "__main__":
