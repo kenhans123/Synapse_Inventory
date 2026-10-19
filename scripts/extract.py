@@ -401,75 +401,115 @@ def _val(v):
     return v
 
 
+def _int(v):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
 def extract_export(args):
+    paths = args.path if isinstance(args.path, list) else [args.path]
     files = []
-    if os.path.isdir(args.path):
-        for root, _, names in os.walk(args.path):
-            files += [os.path.join(root, n) for n in names if n.lower().endswith((".json", ".csv", ".xlsx", ".xlsm"))]
-    else:
-        files = [args.path]
+    for p in paths:
+        if os.path.isdir(p):
+            for root, _, names in os.walk(p):
+                files += [os.path.join(root, n) for n in names if n.lower().endswith((".json", ".csv", ".xlsx", ".xlsm"))]
+        elif os.path.exists(p):
+            files.append(p)
+        else:
+            raise SystemExit(f"Not found: {p}")
     warnings, grouped = [], {}
     required = {"object_schema", "object_name", "type_code", "chunk_no", "chunk_text"}
-    for f in sorted(files):
+    for f in sorted(set(files)):
         rows = _read_export_rows(f)
         if not rows:
-            warnings.append(f"{f}: no rows")
+            warnings.append(f"{os.path.basename(f)}: no rows")
             continue
         cols = {str(k).strip().lower() for k in rows[0].keys()}
         if not required <= cols:
-            warnings.append(f"{f}: skipped - not an export of export_definitions.sql (missing {sorted(required - cols)})")
+            warnings.append(f"{os.path.basename(f)}: skipped - not an export of export_definitions.sql "
+                            f"(missing {sorted(required - cols)})")
             continue
         for r in rows:
             r = {str(k).strip().lower(): v for k, v in r.items()}
-            key = (r["object_schema"], r["object_name"], str(r["type_code"]).strip())
-            g = grouped.setdefault(key, {"meta": r, "chunks": {}})
-            try:
-                n = int(float(r["chunk_no"]))
-            except (TypeError, ValueError):
-                n = 0
-            g["chunks"][n] = "" if _val(r.get("chunk_text")) is None else str(r["chunk_text"])
-    objects = []
+            code = str(r["type_code"]).strip()
+            key = (str(r["object_schema"]), str(r["object_name"]), code)
+            g = grouped.setdefault(key, {"meta": r, "legacy": {}, "pieces": {}, "def_length": None, "src": set()})
+            g["src"].add(os.path.basename(f))
+            text = _val(r.get("chunk_text"))
+            text = None if text is None else str(text)
+            n = _int(r.get("chunk_no")) or 0
+            dl = _int(_val(r.get("def_length")))
+            if dl is not None:
+                g["def_length"] = dl
+            if code == "ET" or _int(_val(r.get("chunk_size"))):
+                g["pieces"][n] = text or ""        # external-table columns / export_long_definitions.sql pieces
+            elif text is not None:
+                prev = g["legacy"].get(n)          # fast export (one row, chunk 0) or the older chunked export
+                if prev is None or len(text) > len(prev):
+                    g["legacy"][n] = text
+
+    objects, truncated = [], []
     for (schema, name, code), g in grouped.items():
         r = g["meta"]
-        nums = sorted(g["chunks"])
-        if code != "ET" and nums and nums != list(range(nums[-1] + 1)):
-            warnings.append(f"{schema}.{name}: missing definition chunks {sorted(set(range(nums[-1] + 1)) - set(nums))}")
-        text = "".join(g["chunks"][n] for n in nums).replace("\r\n", "\n")
-        is_mv = str(_val(r.get("is_materialized")) or "0").strip().lower() in ("1", "true", "1.0")
+        src = ", ".join(sorted(g["src"]))
         if code == "ET":
-            parts = [g["chunks"][n] for n in nums]
+            parts = [g["pieces"][n] for n in sorted(g["pieces"])]
             cols = [c for p in parts for c in (p.split("|") if len(parts) == 1 else [p]) if c and c.strip()]
             definition = (f"CREATE EXTERNAL TABLE [{schema}].[{name}]\n(\n    " + ",\n    ".join(cols) + "\n)\nWITH (\n"
                           f"    LOCATION = '{_val(r.get('location'))}',\n    DATA_SOURCE = [{_val(r.get('data_source'))}],\n"
                           f"    FILE_FORMAT = [{_val(r.get('file_format'))}]\n);"
                           f"\n-- data source location: {_val(r.get('data_source_location'))}"
                           f"\n-- file format type: {_val(r.get('format_type'))}")
-            cc = _val(r.get("column_count"))
             objects.append({
                 "schema": schema, "name": name, "object_type": "External Table", "type_code": "ET",
                 "created": _val(r.get("created")), "modified": _val(r.get("modified")),
                 "definition": definition, "definition_available": True,
                 "location": _val(r.get("location")), "data_source": _val(r.get("data_source")),
                 "data_source_location": _val(r.get("data_source_location")), "file_format": _val(r.get("file_format")),
-                "format_type": _val(r.get("format_type")), "column_count": int(float(cc)) if cc not in (None, "") else len(cols),
-                "source": f"{os.path.basename(args.path)} (external table, definition reconstructed)",
+                "format_type": _val(r.get("format_type")), "column_count": len(cols),
+                "source": f"{src} (external table, definition reconstructed)",
             })
             continue
+
+        expected = g["def_length"]
+        text = ""
+        for store in (g["legacy"], g["pieces"]):
+            if not store:
+                continue
+            nums = sorted(store)
+            gaps = sorted(set(range(nums[-1] + 1)) - set(nums))
+            if gaps:
+                warnings.append(f"{schema}.{name}: definition pieces missing {gaps[:10]}")
+            joined = "".join(store[n] for n in nums)
+            if len(joined) > len(text):
+                text = joined
+        cut = expected is not None and len(text) < expected - 2   # allow for trailing whitespace trimming
+        if cut:
+            truncated.append(f"{schema}.{name}")
         otype = TYPE_MAP.get(code, code)
-        if code == "V" and (is_mv or re.match(r"\s*CREATE\s+MATERIALIZED\s+VIEW", text, re.I)):
+        if code == "V" and (str(_val(r.get("is_materialized")) or "0").strip().lower() in ("1", "true", "1.0")
+                            or re.match(r"\s*CREATE\s+MATERIALIZED\s+VIEW", text, re.I)):
             otype = "Materialized View"
         objects.append({
             "schema": schema, "name": name, "object_type": otype, "type_code": code,
             "function_kind": FUNC_KIND.get(code),
             "created": _val(r.get("created")), "modified": _val(r.get("modified")),
-            "definition": text, "definition_available": bool(text.strip()),
-            "source": os.path.basename(args.path),
+            "definition": text.replace("\r\n", "\n"), "definition_available": bool(text.strip()),
+            "definition_truncated": cut, "definition_length": expected,
+            "source": src,
         })
         if not text.strip():
             warnings.append(f"{schema}.{name}: empty definition (needs VIEW DEFINITION, or object is encrypted)")
+    if truncated:
+        warnings.append(f"{len(truncated)} definition(s) cut short by the results grid: " + ", ".join(sorted(truncated)[:25])
+                        + (" ..." if len(truncated) > 25 else "")
+                        + " -> run assets/export_long_definitions.sql for these, save as JSON and pass both files.")
     if not objects:
         warnings.append("No objects found - check the file is the saved result of export_definitions.sql")
-    return objects, warnings, {"mode": "export", "path": os.path.abspath(args.path)}
+    return objects, warnings, {"mode": "export", "path": ", ".join(os.path.abspath(p) for p in paths),
+                               "truncated": sorted(truncated)}
 
 
 # --------------------------------------------------------------------------- mirror classification
@@ -519,7 +559,8 @@ def main():
     fd = sub.add_parser("folder", help="read exported .sql scripts (SQL project, sqlpackage, Generate Scripts)")
     fd.add_argument("--path", required=True)
     ex = sub.add_parser("export", help="read the saved results of assets/export_definitions.sql (.json/.csv/.xlsx)")
-    ex.add_argument("--path", required=True, help="saved results file, or a folder of them")
+    ex.add_argument("--path", required=True, nargs="+",
+                    help="saved results file(s) - the fast export plus, optionally, the long-definitions export")
     for p in (lv, fd, ex):
         p.add_argument("--out", default="inventory.json")
         p.add_argument("--mirror-pattern", default=DEFAULT_MIRROR_PATTERN,

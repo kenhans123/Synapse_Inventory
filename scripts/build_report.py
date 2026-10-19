@@ -9,6 +9,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -108,36 +109,102 @@ def title_block(ws, title, subtitle):
 
 
 # --------------------------------------------------------------------------- sheets
+EXCEL_MAX_ROWS = 1_048_576
+SHEET_ROW_BUDGET = 1_000_000      # rows per Definitions sheet (headroom under Excel's limit)
+AUTO_SHEET_LIMIT = 300_000        # above this many code rows, "auto" writes .sql files instead (keeps the workbook fast)
+INVALID_PATH = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _def_lines(o):
+    lines = (o.get("definition") or "-- definition not available").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return lines or ["-- definition not available"]
+
+
+def definitions_mode(objects, requested):
+    if requested != "auto":
+        return requested
+    rows = sum(len(_def_lines(o)) + 2 for o in objects)
+    return "sheet" if rows <= AUTO_SHEET_LIMIT else "files"
+
+
 def write_definitions(wb, objects):
-    ws = wb.create_sheet("Definitions")
-    ws.sheet_properties.tabColor = "7F7F7F"
-    ws.column_dimensions["A"].width = 7
-    ws.column_dimensions["B"].width = 150
+    """Code inside the workbook, split over 'Definitions', 'Definitions 2', ... so no sheet passes Excel's row limit."""
     code_font = Font(name="Consolas", size=9)
-    row = 1
-    anchors = {}
+    anchors, ws, row, n = {}, None, 1, 0
+
+    def new_sheet():
+        nonlocal ws, row, n
+        n += 1
+        ws = wb.create_sheet("Definitions" if n == 1 else f"Definitions {n}")
+        ws.sheet_properties.tabColor = "7F7F7F"
+        ws.column_dimensions["A"].width = 7
+        ws.column_dimensions["B"].width = 150
+        row = 1
+
+    new_sheet()
     for o in objects:
-        anchors[o["full_name"]] = row
+        lines = _def_lines(o)
+        cut = len(lines) + 2 > SHEET_ROW_BUDGET
+        if cut:
+            lines = lines[: SHEET_ROW_BUDGET - 3] + ["-- ... truncated: definition longer than one Excel sheet"]
+        if row + len(lines) + 1 > SHEET_ROW_BUDGET:
+            new_sheet()
+        anchors[o["full_name"]] = f"#'{ws.title}'!B{row}"
         put(ws, row, 1, None, fill=NAVY)
         put(ws, row, 2, f"{o['full_name']}   ·   {o['object_type']}   ·   {o.get('lines', 0)} lines   ·   source: {o.get('source')}",
             Font(name=FONT, bold=True, color="FFFFFF", size=10), fill=NAVY)
         row += 1
-        lines = (o.get("definition") or "-- definition not available").replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        while lines and not lines[-1].strip():
-            lines.pop()
         for i, ln in enumerate(lines, 1):
             put(ws, row, 1, i, Font(name="Consolas", size=8, color="808080"))
             put(ws, row, 2, txt(ln.replace("\t", "    ")) or None, code_font, as_text=True)  # code starting '=' stays text
             row += 1
         row += 1
-    ws.freeze_panes = "A1"
     return anchors
 
 
-def link(ws, row, col, text, anchor_row):
-    c = put(ws, row, col, text, Font(name=FONT, size=10, color="0563C1", underline="single"), TOP)
-    if anchor_row:
-        c.hyperlink = f"#Definitions!B{anchor_row}"
+def write_definition_files(wb, objects, out_xlsx):
+    """One .sql file per object next to the workbook; returns relative hyperlink targets."""
+    base = os.path.dirname(os.path.abspath(out_xlsx))
+    root = os.path.join(base, "definitions")
+    anchors, used = {}, set()
+    for o in objects:
+        folder = os.path.join(root, INVALID_PATH.sub("_", o["schema"])[:60],
+                              SHEET_FOR.get(o["object_type"], o["object_type"]))
+        os.makedirs(folder, exist_ok=True)
+        stem = INVALID_PATH.sub("_", o["name"])[:100] or "unnamed"
+        path = os.path.join(folder, stem + ".sql")
+        k = 2
+        while path.lower() in used:
+            path = os.path.join(folder, f"{stem}_{k}.sql"); k += 1
+        used.add(path.lower())
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(_def_lines(o)) + "\n")
+        anchors[o["full_name"]] = os.path.relpath(path, base).replace(os.sep, "/")
+
+    ws = wb.create_sheet("Definitions")
+    ws.sheet_properties.tabColor = "7F7F7F"
+    title_block(ws, "Definitions (as .sql files)",
+                f"This datamart's code is too large to keep inside Excel, so every definition was written to the "
+                f"'definitions' folder next to this workbook. Click a name to open its file.")
+    header_row(ws, 4, ["#", "Object (→ .sql file)", "Type", "Lines", "File"], [6, 46, 20, 9, 80])
+    for i, o in enumerate(objects, 1):
+        r = i + 4
+        put(ws, r, 1, i)
+        link(ws, r, 2, o["full_name"], anchors[o["full_name"]])
+        put(ws, r, 3, o["object_type"])
+        put(ws, r, 4, o.get("lines"))
+        put(ws, r, 5, anchors[o["full_name"]], Font(name=FONT, size=9, color="595959"))
+    add_table(ws, "tblDefinitionFiles", 4, len(objects) + 4, 5)
+    ws.freeze_panes = "C5"
+    return anchors
+
+
+def link(ws, row, col, text, target):
+    c = put(ws, row, col, text, Font(name=FONT, size=10, color="0563C1", underline="single") if target else BODY, TOP)
+    if target:
+        c.hyperlink = target
     return c
 
 
@@ -444,7 +511,7 @@ def write_lineage(wb, objects, nodes, edges, waves, cyclic, anchors, html_name, 
         d = put(ws, r, 11, "view code" if anchors.get(fn) else None,
                 Font(name=FONT, size=10, color="0563C1", underline="single"), TOP)
         if anchors.get(fn):
-            d.hyperlink = f"#Definitions!B{anchors[fn]}"
+            d.hyperlink = anchors[fn]
         r += 1
     add_table(ws, "tblLineage", 5, r - 1, len(headers))
     rating_cf(ws, "D", 6, r - 1)
@@ -510,7 +577,9 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--target", choices=["databricks", "fabric"], default="databricks")
     ap.add_argument("--client")
-    ap.add_argument("--no-definitions", action="store_true")
+    ap.add_argument("--no-definitions", action="store_true", help="same as --definitions none")
+    ap.add_argument("--definitions", choices=["auto", "sheet", "files", "none"], default="auto",
+                    help="where the code goes: auto (sheet if small, else .sql files), sheet, files, none")
     ap.add_argument("--no-lineage", action="store_true", help="skip Lineage sheets and the HTML explorer")
     ap.add_argument("--no-lineage-images", action="store_true", help="Lineage table only, no diagram images")
     ap.add_argument("--lineage-depth", type=int, default=2, help="hops each way in Excel diagrams (default 2)")
@@ -526,11 +595,17 @@ def main():
     deps = analyze(objects, a.target)
 
     wb = Workbook()
-    anchors = {} if a.no_definitions else None
+    notes = []
     feature_keys = [f[0] for f in FEATURES]
     write_summary(wb, meta, objects, feature_keys, a.target, a.client)
-    if anchors is None:
+    dmode = "none" if a.no_definitions else definitions_mode(objects, a.definitions)
+    total_lines = sum(o.get("lines") or 0 for o in objects)
+    if dmode == "sheet":
         anchors = write_definitions(wb, objects)
+    elif dmode == "files":
+        anchors = write_definition_files(wb, objects, a.out)
+    else:
+        anchors = {}
     write_inventory(wb, objects, anchors)
     for t in TYPE_ORDER:
         objs = [o for o in objects if o["object_type"] == t]
@@ -538,7 +613,10 @@ def main():
             write_type_sheet(wb, t, objs, anchors)
     write_features(wb, objects)
     write_dependencies(wb, deps)
-    html_path, notes = None, []
+    html_path = None
+    if dmode == "files":
+        notes.append(f"{total_lines:,} lines of code - too large for Excel, so definitions were written as .sql files in "
+                     f"{os.path.join(os.path.dirname(os.path.abspath(a.out)), 'definitions')} (linked from the workbook)")
     if not a.no_lineage:
         nodes, edges = lin.build_graph(objects, deps)
         waves, cyclic = lin.migration_waves(nodes, edges)
@@ -558,9 +636,9 @@ def main():
                       a.lineage_depth, a.max_diagrams)
     write_about(wb, meta)
     # order: Summary, Inventory, type sheets, Feature Matrix, Dependencies, Definitions, About
-    if "Definitions" in wb.sheetnames:
-        d = wb["Definitions"]
-        wb.move_sheet(d, offset=len(wb.sheetnames) - 1 - wb.sheetnames.index("Definitions") - 1)
+    defs = [n for n in wb.sheetnames if n == "Definitions" or n.startswith("Definitions ")]
+    order = [n for n in wb.sheetnames if n not in defs and n != "About"] + defs + ["About"]
+    wb._sheets = [wb[n] for n in order]
     wb.calculation.fullCalcOnLoad = True   # Excel computes formulas on open; no LibreOffice needed
     wb.save(a.out)
     counts = {}

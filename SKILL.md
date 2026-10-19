@@ -19,6 +19,9 @@ Outputs go to `output/<datamart>/` under the current folder. Run it from the wor
 On Windows try `python`, then `py`, then `python3`. Never run `pip install` unless the user says installing is allowed.
 If the user has no export yet, give them `assets/export_definitions.sql` and the steps in
 `references/vscode-setup.md` §4f (run in their SQL connection → results grid → Save as JSON).
+If the build warns that definitions were "cut short by the results grid", give them
+`assets/export_long_definitions.sql` with those names in `@names`, then rebuild passing both files:
+`python scripts/inventory.py <first>.json <long>.json --datamart NAME`.
 In VS Code the same build is available as a task: Terminal → Run Task → "Synapse inventory: …" (`.vscode/tasks.json`).
 
 Lineage Diagrams (images inside Excel) need matplotlib; without it that one sheet is skipped and the HTML explorer
@@ -95,7 +98,9 @@ Summary and "Referenced By" use live formulas; the workbook is flagged to calcul
 If LibreOffice and an xlsx recalc script are available (e.g. Claude's `/mnt/skills/public/xlsx/scripts/recalc.py`),
 run it and confirm 0 errors; otherwise skip — do not install LibreOffice just for this.
 
-Use `--no-definitions` for very large datamarts (> ~300k lines of code) or when the user wants metadata only.
+Large datamarts are handled automatically (see Definitions below); `--definitions none` gives metadata only.
+When the code goes to `.sql` files, keep the `definitions` folder next to the workbook (links are relative) and
+zip the whole `output/<datamart>` folder when sharing.
 
 Outputs (same folder):
 - `<name>.xlsx` — the workbook below
@@ -128,7 +133,7 @@ gets a shareable private link — but only when the datamart is not confidential
 | Dependencies | Object → referenced object, operation (READ/WRITE/EXEC/CALL), resolved in datamart |
 | Lineage | Per object: migration wave, direct upstream / downstream, transitive counts, circular-dependency flag; names link to diagrams |
 | Lineage Diagrams | One diagram per object (bold border = the object) beside its upstream / downstream list |
-| Definitions | Full source, one line per row with line numbers; names on other sheets hyperlink here |
+| Definitions | The code. Up to ~300k lines: inside the workbook, one line per row, split over `Definitions`, `Definitions 2`, … so no sheet passes Excel's 1,048,576-row limit. Larger datamarts: one `.sql` file per object in `definitions/<schema>/<type>/` next to the workbook, and this sheet lists and links them. Override with `--definitions sheet\|files\|none` |
 | About | Method, scoring weights, rating bands, mirror rule, extraction warnings |
 
 ## Lineage rules

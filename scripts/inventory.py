@@ -36,7 +36,7 @@ def run(args):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("source", help="export file (.json/.csv/.xlsx) or folder of .sql scripts")
+    ap.add_argument("source", nargs="+", help="export file(s) (.json/.csv/.xlsx) or a folder of .sql scripts")
     ap.add_argument("--datamart", help="name used in the report and file names (default: from the file name)")
     ap.add_argument("--client")
     ap.add_argument("--target", choices=["databricks", "fabric"], default="databricks")
@@ -45,12 +45,15 @@ def main():
     ap.add_argument("--open", action="store_true", help="open the lineage explorer in the browser when done")
     a, extra = ap.parse_known_args()   # anything unrecognised is passed on to build_report.py
 
-    src = os.path.abspath(a.source)
-    if not os.path.exists(src):
-        sys.exit(f"Not found: {a.source}")
-    is_folder = os.path.isdir(src) and any(f.lower().endswith(".sql") for _, _, fs in os.walk(src) for f in fs)
+    srcs = [os.path.abspath(x) for x in a.source]
+    for x in srcs:
+        if not os.path.exists(x):
+            sys.exit(f"Not found: {x}")
+    src = srcs[0]
+    is_folder = len(srcs) == 1 and os.path.isdir(src) and any(
+        f.lower().endswith(".sql") for _, _, fs in os.walk(src) for f in fs)
     stem = os.path.splitext(os.path.basename(src.rstrip("/\\")))[0]
-    name = a.datamart or re.sub(r"[_\- ]*(definitions?|export|results?)$", "", stem, flags=re.I) or stem
+    name = a.datamart or re.sub(r"[_\- ]*(long[_\- ]*)?(definitions?|export|results?)$", "", stem, flags=re.I) or stem
     safe = re.sub(r"[^\w\-]+", "_", name)
     out_dir = os.path.join(os.path.abspath(a.out_dir), safe)
     os.makedirs(out_dir, exist_ok=True)
@@ -58,8 +61,8 @@ def main():
     xlsx = os.path.join(out_dir, f"{safe}_Object_Inventory.xlsx")
 
     py = sys.executable
-    cmd = [py, os.path.join(HERE, "extract.py"), "folder" if is_folder else "export", "--path", src,
-           "--datamart", name, "--out", inv]
+    cmd = [py, os.path.join(HERE, "extract.py"), "folder" if is_folder else "export", "--path"] + \
+        ([src] if is_folder else srcs) + ["--datamart", name, "--out", inv]
     if a.mirror_pattern:
         cmd += ["--mirror-pattern", a.mirror_pattern]
     ext = run(cmd)

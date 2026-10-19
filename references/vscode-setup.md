@@ -131,7 +131,9 @@ Only **Python 3.8+** is needed to build the Excel report — no `pip install`, n
 
 **1. Export the definitions (your existing SQL connection)**
 1. SQL Server panel → right-click the datamart connection → **New Query**.
-2. Paste all of `assets/export_definitions.sql` and run it (`Ctrl+Shift+E`).
+2. Paste all of `assets/export_definitions.sql` and run it (`Ctrl+Shift+E`). It is a plain catalog read
+   (one row per object) and should return in seconds; if even `SELECT COUNT(*) FROM sys.sql_modules`
+   is slow, the pool is busy or queued — try a quieter time.
 3. Results grid → icons on its right edge → **Save as JSON** (CSV / Excel also work), e.g. `bidw_definitions.json`.
    Save it inside the opened folder so VS Code can see it.
 
@@ -149,8 +151,17 @@ Only **Python 3.8+** is needed to build the Excel report — no `pip install`, n
 Output: `output/bidw/bidw_Object_Inventory.xlsx` and `output/bidw/bidw_Object_Inventory_Lineage.html`
 (`--open` opens the lineage explorer in the browser). The datamart name comes from the file name; override with `--datamart`.
 
-The query is read-only (catalog views only, no table data). Long definitions are split into 4,000-character
-chunks so the results grid can't truncate them; the skill stitches them back together and warns if a chunk is missing.
+The query is read-only (catalog views only, no table data). It also returns each definition's true length, and the
+build checks every definition against it.
+
+**If the build says "definition(s) cut short by the results grid"** (only possible for very long procedures):
+1. Open `assets/export_long_definitions.sql`, paste the listed names into `@names`
+   (e.g. `N'dm.usp_Load_FactSales, dm.usp_Big_Merge'`), run it, **Save as JSON** → `bidw_long_definitions.json`.
+2. Rebuild with both files:
+   `python scripts/inventory.py bidw_definitions.json bidw_long_definitions.json --datamart bidw --client CCEP`
+   (with the VS Code task, put both files in one folder and give the folder path).
+Cut-short objects are also flagged in the report's Migration Notes until fixed.
+
 Without matplotlib the *Lineage Diagrams* sheet is skipped; the HTML explorer has every diagram.
 
 **Option B — SQL Database Project (dedicated pool only)**
@@ -189,6 +200,7 @@ Without the extension, Visual Studio (SSDT) → SQL Server Database Project → 
 | `DefaultAzureCredential failed` | Run `az login`; or use `SYNAPSE_AUTH=ActiveDirectoryInteractive` on Windows |
 | Definitions empty / "not readable" | Missing VIEW DEFINITION, or object is `WITH ENCRYPTION` |
 | Materialized views show as views | Serverless endpoint (no MVs) or `sys.pdw_materialized_view_*` not visible — see About sheet warnings |
+| Export query runs for minutes | Use the current `export_definitions.sql` (one row per object). Uncomment the schema filter for very large datamarts; check the pool isn't paused/queued |
 | `'python' is not recognized` / opens Microsoft Store | Use `py` instead (Windows launcher); in the task pick `py` |
 | `f-string` / `SyntaxError` on an old Python | Python 3.8+ is required — check `python --version` |
 | No Lineage Diagrams sheet | matplotlib isn't installed — expected; use the `_Lineage.html` explorer |

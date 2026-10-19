@@ -297,6 +297,9 @@ def analyze(objects, target="databricks"):
             notes.insert(0, "Source already lives in Delta: register directly in Unity Catalog (no copy) and retire the Synapse external object."
                          if target == "databricks" else
                          "Expose via OneLake shortcut / Mirrored Azure Databricks catalog instead of an external table.")
+        if o.get("definition_truncated"):
+            notes.insert(0, "Definition was cut short in the export - analysis is partial; re-export with "
+                            "export_long_definitions.sql.")
         if not o.get("definition_available", True):
             notes.insert(0, "Definition not readable (encrypted or permissions) - obtain source manually.")
         o["migration_notes"] = " ".join(dict.fromkeys(notes)) or "Straight port; syntax review only."
